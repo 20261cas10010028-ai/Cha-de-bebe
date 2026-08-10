@@ -158,7 +158,15 @@
   .edit-item-row input[type=number]{ flex:0 0 70px; }
   .edit-item-row .del{ background:none; border:none; color:var(--blush-dark); font-size:18px; cursor:pointer; flex:0 0 24px; }
   .edit-cat-title{ font-weight:800; font-size:14px; margin:18px 0 8px; }
+  .cat-edit-header{ display:flex; align-items:center; gap:8px; margin:20px 0 8px; }
+  .cat-name-input{ flex:1; font-weight:800; font-size:14px; }
+  .del-cat{ background:none; border:none; color:var(--blush-dark); font-size:20px; cursor:pointer; flex:0 0 26px; line-height:1; }
   .add-row{ background:none; border:1.5px dashed var(--rope); color:var(--ink-soft); border-radius:9px; padding:7px; font-size:12.5px; font-weight:700; cursor:pointer; width:100%; margin-top:4px; }
+  .add-cat-row{ margin-top:16px; border-color:var(--sage-dark); color:var(--sage-dark); }
+  .danger-zone{ margin-top:26px; padding-top:16px; border-top:1.5px dashed var(--line); }
+  .danger-zone .hint{ margin-top:0; }
+  .btn-danger{ background:transparent; color:var(--blush-dark); border:1.5px solid var(--blush-dark); width:auto; padding:9px 16px; }
+  .btn-danger:hover{ background: rgba(78,127,163,0.1); }
 
   .loading{ text-align:center; padding:60px 0; color:var(--ink-soft); font-weight:700; }
 
@@ -246,7 +254,7 @@ function defaultConfig(){
         {id:'kit-higiene', name:'Kit de higiene (tesoura, escova, pente)', unit:'kit', needed:2},
         {id:'termometro', name:'Termômetro digital', unit:'unidade', needed:1},
       ]},
-      { id:'Toalhas', name:'toalhinhas', accent:'sage', items:[
+      { id:'roupas', name:'Roupinhas', accent:'sage', items:[
         {id:'body-rn', name:'Body manga curta RN', unit:'unidade', needed:6},
         {id:'body-p', name:'Body manga longa P', unit:'unidade', needed:6},
         {id:'macacao-m', name:'Macacão M', unit:'unidade', needed:5},
@@ -364,6 +372,38 @@ function escapeHTML(s){
 async function toggleItem(itemId){
   if(!configured){ showToast('Configure o banco primeiro (veja o aviso no topo).'); return; }
 
+  const wasMine = mine.includes(itemId);
+
+  // Antes de confirmar uma reserva (não ao desfazer), se o item for da categoria
+  // "Fraldas", mostra um aviso sutil sobre guardar a nota fiscal.
+  if(!wasMine){
+    const cat = config.categories.find(c => c.items.some(i => i.id === itemId));
+    if(cat && cat.id === 'fraldas'){
+      showFraldaNote(itemId);
+      return;
+    }
+  }
+
+  await commitToggle(itemId);
+}
+
+function showFraldaNote(itemId){
+  modalBody.innerHTML = `
+    <h3>Vou levar este 💛</h3>
+    <p class="hint">Combinado! Só uma dica: se puder, guarda a notinha da compra — assim, se por acaso essa marca não combinar com a pele do bebê, fica mais fácil trocar.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">Voltar</button>
+      <button class="btn btn-take" id="confirmFraldaBtn">Confirmar</button>
+    </div>
+  `;
+  openModal();
+  document.getElementById('confirmFraldaBtn').addEventListener('click', async ()=>{
+    closeModal();
+    await commitToggle(itemId);
+  });
+}
+
+async function commitToggle(itemId){
   const idx = mine.indexOf(itemId);
   const wasMine = idx >= 0;
   const delta = wasMine ? -1 : 1;
@@ -443,7 +483,11 @@ function openEnterPin(){
 function openEditPanel(){
   let catsHTML = '';
   config.categories.forEach((cat, ci)=>{
-    catsHTML += `<div class="edit-cat-title">${escapeHTML(cat.name)}</div>`;
+    catsHTML += `
+      <div class="cat-edit-header">
+        <input type="text" class="cat-name-input" value="${escapeHTML(cat.name)}" data-catname="${ci}">
+        <button class="del-cat" data-delcat="${ci}" title="Remover categoria inteira">×</button>
+      </div>`;
     cat.items.forEach((item, ii)=>{
       catsHTML += `
         <div class="edit-item-row">
@@ -452,12 +496,13 @@ function openEditPanel(){
           <button class="del" data-c="${ci}" data-i="${ii}" title="Remover">×</button>
         </div>`;
     });
-    catsHTML += `<button class="add-row" data-addcat="${ci}">+ adicionar item em ${escapeHTML(cat.name)}</button>`;
+    catsHTML += `<button class="add-row" data-addcat="${ci}">+ adicionar item nesta categoria</button>`;
   });
+  catsHTML += `<button class="add-row add-cat-row" id="addCategoryBtn">+ adicionar nova categoria</button>`;
 
   modalBody.innerHTML = `
     <h3>Editar lista</h3>
-    <p class="hint">Ajuste título, quantidades e itens. As mudanças aparecem pra todo mundo.</p>
+    <p class="hint">Ajuste título, categorias, quantidades e itens. As mudanças aparecem pra todo mundo.</p>
     <label>Título</label>
     <input type="text" id="editTitle" value="${escapeHTML(config.title)}">
     <label>Subtítulo</label>
@@ -465,6 +510,11 @@ function openEditPanel(){
     <label>Data / local (opcional)</label>
     <input type="text" id="editEvent" value="${escapeHTML(config.eventInfo||'')}" placeholder="Ex: 15 de agosto, na casa da vovó">
     ${catsHTML}
+    <div class="danger-zone">
+      <div class="edit-cat-title">Zona de reset</div>
+      <p class="hint">Zera todas as reservas feitas até agora (útil pra limpar testes antes de mandar o link de verdade). Essa ação não pode ser desfeita.</p>
+      <button class="btn btn-danger" id="resetAllBtn">Zerar todas as reservas</button>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal()">Fechar</button>
       <button class="btn btn-take" id="saveEditBtn">Salvar tudo</button>
@@ -479,18 +529,65 @@ function openEditPanel(){
       openEditPanel();
     });
   });
+
+  modalBody.querySelectorAll('.del-cat').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const c = +btn.dataset.delcat;
+      const name = config.categories[c].name;
+      if(confirm('Remover a categoria "' + name + '" e todos os itens dela? Essa ação some ao salvar.')){
+        config.categories.splice(c,1);
+        openEditPanel();
+      }
+    });
+  });
+
   modalBody.querySelectorAll('.add-row').forEach(btn=>{
+    if(btn.id === 'addCategoryBtn') return; // tratado separadamente abaixo
     btn.addEventListener('click', ()=>{
       const c = +btn.dataset.addcat;
       config.categories[c].items.push({id: 'item-' + Date.now(), name:'Novo item', unit:'unidade', needed:1});
       openEditPanel();
     });
   });
+
+  document.getElementById('addCategoryBtn').addEventListener('click', ()=>{
+    const name = prompt('Nome da nova categoria (ex: Brinquedos):');
+    if(name && name.trim()){
+      config.categories.push({
+        id: 'cat-' + Date.now(),
+        name: name.trim(),
+        accent: config.categories.length % 2 === 0 ? 'sage' : 'blush',
+        items: []
+      });
+      openEditPanel();
+    }
+  });
+
+  document.getElementById('resetAllBtn').addEventListener('click', async ()=>{
+    if(!confirm('Tem certeza? Isso vai zerar TODAS as reservas pra todo mundo. Essa ação não pode ser desfeita.')) return;
+    try{
+      const allItemIds = config.categories.flatMap(c => c.items.map(i => i.id));
+      const updates = {};
+      allItemIds.forEach(id => { updates['counts/' + id] = 0; });
+      await db.ref().update(updates);
+      mine = [];
+      localStorage.setItem('my_reservations', JSON.stringify(mine));
+      showToast('Reservas zeradas!');
+      closeModal();
+      render();
+    } catch(e){
+      showToast('Não consegui zerar, tenta de novo.');
+    }
+  });
+
   document.getElementById('saveEditBtn').addEventListener('click', async ()=>{
     config.title = document.getElementById('editTitle').value.trim() || 'Chá de bebê';
     config.subtitle = document.getElementById('editSubtitle').value.trim();
     config.eventInfo = document.getElementById('editEvent').value.trim();
 
+    modalBody.querySelectorAll('[data-catname]').forEach(inp=>{
+      config.categories[+inp.dataset.catname].name = inp.value.trim() || 'Categoria';
+    });
     modalBody.querySelectorAll('[data-f="name"]').forEach(inp=>{
       config.categories[+inp.dataset.c].items[+inp.dataset.i].name = inp.value.trim() || 'Item';
     });
